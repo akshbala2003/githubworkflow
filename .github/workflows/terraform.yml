@@ -1,0 +1,86 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - stage
+      - prod
+  pull_request:
+    branches:
+      - main
+      - dev
+      - stage
+      - prod
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: self-hosted
+    
+    permissions:
+      contents: read
+      pull-requests: write
+
+    env:
+      AWS_REGION: us-west-2  # Changed from us-east-1
+      BACKEND_BUCKET: tf-state-aks
+      BACKEND_DYNAMODB: terraform-state-locks-aks
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Configure AWS credentials using the runner role
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::590852515231:role/runner-agent-role-aks
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Determine environment from branch name
+      - name: Set Environment
+        run: |
+          if [[ ${{ github.ref }} == refs/heads/prod ]]; then
+            echo "ENV=prod" >> $GITHUB_ENV
+          elif [[ ${{ github.ref }} == refs/heads/stage ]]; then
+            echo "ENV=stage" >> $GITHUB_ENV
+          elif [[ ${{ github.ref }} == refs/heads/dev ]]; then
+            echo "ENV=dev" >> $GITHUB_ENV
+          else
+            echo "ENV=main" >> $GITHUB_ENV
+          fi
+
+      # Cache Terraform files
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            .terraform
+            .terraform.lock.hcl
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      # Initialize Terraform
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.BACKEND_BUCKET }}" \
+            -backend-config="key=${{ env.ENV }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.BACKEND_DYNAMODB }}"
+
+      # Terraform Plan
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var-file="environments/${{ env.ENV }}.tfvars" \
+            -var="env=${{ env.ENV }}" \
+            -out=tfplan
+
+      # Terraform Apply (only on push to branches, not on PR)
+      - name: Terraform Apply
+        if: github.event_name == 'push'
+        run: terraform apply -auto-approve tfplan 
