@@ -25,7 +25,7 @@ jobs:
       id-token: write   
 
     env:
-      AWS_REGION: us-west-2  # Changed from us-east-1
+      AWS_REGION: us-west-2
       BACKEND_BUCKET: tf-state-aks
       BACKEND_DYNAMODB: terraform-state-locks-aks
 
@@ -76,6 +76,10 @@ jobs:
       # Terraform Plan
       - name: Terraform Plan
         run: |
+          # Replace variables in tfvars file
+          sed -i "s/\${TF_STATE_BUCKET}/${{ env.BACKEND_BUCKET }}/g" environments/${{ env.ENV }}.tfvars
+          sed -i "s/\${TF_STATE_LOCK_TABLE}/${{ env.BACKEND_DYNAMODB }}/g" environments/${{ env.ENV }}.tfvars
+          
           terraform plan \
             -var-file="environments/${{ env.ENV }}.tfvars" \
             -var="env=${{ env.ENV }}" \
